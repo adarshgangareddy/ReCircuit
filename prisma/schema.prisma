@@ -1,0 +1,194 @@
+// ReCircuit - Prisma Database Schema
+// Optimized for PostgreSQL in production and SQLite for local development
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model User {
+  id            String       @id @default(uuid())
+  email         String       @unique
+  phone         String?      @unique
+  passwordHash  String
+  role          String       @default("user") // 'user' | 'admin'
+  status        String       @default("active") // 'active' | 'suspended' | 'banned'
+  trustScore    Float        @default(4.8)
+  avatarUrl     String?
+  name          String
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  listings      Listing[]
+  buyerOffers   Offer[]      @relation("BuyerOffers")
+  sellerOffers  Offer[]      @relation("SellerOffers")
+  buyerOrders   Order[]      @relation("BuyerOrders")
+  sellerOrders  Order[]      @relation("SellerOrders")
+  reviewsGiven  Review[]     @relation("ReviewsGiven")
+  reviewsRecv   Review[]     @relation("ReviewsReceived")
+  reportsFiled  Report[]     @relation("ReportsFiled")
+  adminActions  AdminAction[]
+}
+
+model Category {
+  id           String    @id @default(uuid())
+  name         String    @unique
+  slug         String    @unique
+  description  String?
+  isRegulated  Boolean   @default(false) // Batteries, CRT monitors require review
+  icon         String    @default("cpu")
+  listings     Listing[]
+}
+
+model Listing {
+  id               String         @id @default(uuid())
+  sellerId         String
+  categoryId       String
+  title            String
+  description      String
+  condition        String         // 'working' | 'partial' | 'for_parts'
+  suggestedPrice   Float
+  askingPrice      Float
+  scrapWeightKg    Float?
+  scrapValueEst    Float?
+  status           String         @default("active") // 'draft' | 'pending_review' | 'active' | 'sold' | 'flagged' | 'removed'
+  city             String         @default("Bengaluru")
+  locationLat      Float?
+  locationLng      Float?
+  isHazardous      Boolean        @default(false)
+  hazardDisclosed  Boolean        @default(false)
+  viewsCount       Int            @default(0)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  seller           User           @relation(fields: [sellerId], references: [id])
+  category         Category       @relation(fields: [categoryId], references: [id])
+  images           ListingImage[]
+  scanResults      ScanResult[]
+  offers           Offer[]
+  orders           Order[]
+  reports          Report[]
+}
+
+model ListingImage {
+  id        String   @id @default(uuid())
+  listingId String
+  s3Key     String
+  isPrimary Boolean  @default(false)
+  listing   Listing  @relation(fields: [listingId], references: [id], onDelete: Cascade)
+}
+
+model ScanResult {
+  id                String   @id @default(uuid())
+  listingId         String
+  detectedBrand     String
+  detectedModel     String
+  detectedCondition String   // 'working' | 'partial' | 'for_parts'
+  confidenceScore   Float    // 0.0 - 1.0
+  suggestedPriceMin Float
+  suggestedPriceMax Float
+  modelVersion      String   @default("vision-e-waste-v1.4")
+  detectedFlaws     String   // JSON string of detected visual defects
+  createdAt         DateTime @default(now())
+
+  listing           Listing  @relation(fields: [listingId], references: [id], onDelete: Cascade)
+}
+
+model Offer {
+  id            String   @id @default(uuid())
+  listingId     String
+  buyerId       String
+  sellerId      String
+  amount        Float
+  status        String   @default("pending") // 'pending' | 'countered' | 'accepted' | 'rejected' | 'expired'
+  counterAmount Float?
+  message       String?
+  parentOfferId String?
+  createdAt     DateTime @default(now())
+
+  listing       Listing  @relation(fields: [listingId], references: [id])
+  buyer         User     @relation("BuyerOffers", fields: [buyerId], references: [id])
+  seller        User     @relation("SellerOffers", fields: [sellerId], references: [id])
+}
+
+model Order {
+  id          String   @id @default(uuid())
+  listingId   String
+  buyerId     String
+  sellerId    String
+  finalPrice  Float
+  status      String   @default("pending_payment") // 'pending_payment' | 'paid' | 'shipped' | 'delivered' | 'disputed' | 'completed' | 'refunded'
+  paymentRef  String?
+  escrowStatus String  @default("held") // 'held' | 'released' | 'frozen_dispute' | 'refunded'
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  listing     Listing  @relation(fields: [listingId], references: [id])
+  buyer       User     @relation("BuyerOrders", fields: [buyerId], references: [id])
+  seller      User     @relation("SellerOrders", fields: [sellerId], references: [id])
+  reviews     Review[]
+}
+
+model Review {
+  id          String   @id @default(uuid())
+  orderId     String
+  reviewerId  String
+  revieweeId  String
+  rating      Int
+  comment     String
+  createdAt   DateTime @default(now())
+
+  order       Order    @relation(fields: [orderId], references: [id])
+  reviewer    User     @relation("ReviewsGiven", fields: [reviewerId], references: [id])
+  reviewee    User     @relation("ReviewsReceived", fields: [revieweeId], references: [id])
+}
+
+model Report {
+  id          String   @id @default(uuid())
+  listingId   String
+  reporterId  String
+  reason      String
+  status      String   @default("open") // 'open' | 'reviewed' | 'dismissed'
+  reviewedBy  String?
+  createdAt   DateTime @default(now())
+
+  listing     Listing  @relation(fields: [listingId], references: [id])
+  reporter    User     @relation("ReportsFiled", fields: [reporterId], references: [id])
+}
+
+model AdminAction {
+  id         String   @id @default(uuid())
+  adminId    String
+  actionType String   // 'ban_user' | 'suspend_user' | 'approve_listing' | 'remove_listing' | 'freeze_escrow' | 'release_escrow' | 'refund_escrow' | 'price_override'
+  targetType String   // 'user' | 'listing' | 'order' | 'report' | 'price_ref'
+  targetId   String
+  reason     String
+  createdAt  DateTime @default(now())
+
+  admin      User     @relation(fields: [adminId], references: [id])
+}
+
+model PriceReference {
+  id              String   @id @default(uuid())
+  brand           String
+  model           String
+  condition       String   // 'working' | 'partial' | 'for_parts'
+  minPrice        Float
+  maxPrice        Float
+  scrapBaseRate   Float    // Estimated metal salvage value
+  updatedAt       DateTime @updatedAt
+}
+
+model PriceHistory {
+  id          String   @id @default(uuid())
+  brand       String
+  model       String
+  condition   String
+  category    String
+  agreedPrice Float
+  createdAt   DateTime @default(now())
+}
